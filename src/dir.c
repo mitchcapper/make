@@ -13,15 +13,21 @@ A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
 this program.  If not, see <https://www.gnu.org/licenses/>.  */
-
+#include "config.h"
 #include "makeint.h"
 #include "hash.h"
 #include "filedef.h"
 #include "dep.h"
 #include "debug.h"
+#define GetVolumeInformation GetVolumeInformationA
+#if defined HAVE_DIRENT_H || defined _WIN32
+#ifdef _WIN32
+#include <dirent.h>
+#include <sys/types.h>
+#define MAX_PATH 1024
+#define FALSE 0
+#endif
 
-#ifdef HAVE_DIRENT_H
-# include <dirent.h>
 # define NAMLEN(dirent) strlen((dirent)->d_name)
 # if MK_OS_VMS
 /* its prototype is in vmsdir.h, which is not needed for HAVE_DIRENT_H */

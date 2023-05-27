@@ -22,7 +22,9 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include <assert.h>
 #include <stdarg.h>
-
+#ifdef _WIN32
+#define HAVE_UNISTD_H
+#endif
 #if MK_OS_W32
 # include <windows.h>
 # include <io.h>
