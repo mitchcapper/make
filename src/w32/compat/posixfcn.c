@@ -119,7 +119,7 @@ dlclose (void *handle)
 
 
 #endif  /* MAKE_LOAD */
-
+#undef isatty
 
 /* MS runtime's isatty returns non-zero for any character device,
    including the null device, which is not what we want.  */

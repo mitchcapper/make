@@ -27,6 +27,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include "os.h"
 #include "filename.h"
 #include "rule.h"
+#define _lookup_variable(str) (lookup_variable (str, strlen(str)))
 #if MK_OS_W32
 #include "pathstuff.h"
 #endif
@@ -933,6 +934,7 @@ define_automatic_variables (void)
 {
   struct variable *v;
   char buf[200];
+  const char* default_shell = shell_get_default();
 
   sprintf (buf, "%u", makelevel);
   define_variable_cname (MAKELEVEL_NAME, buf, o_env, 0);
@@ -946,20 +948,28 @@ define_automatic_variables (void)
   define_variable_cname ("MAKE_VERSION", buf, o_default, 0);
   define_variable_cname ("MAKE_HOST", make_host, o_default, 0);
 
-#if MK_OS_DOS
   /* Allow to specify a special shell just for Make,
      and use $COMSPEC as the default $SHELL when appropriate.  */
-  {
     static char shell_str[] = "SHELL";
     const int shlen = sizeof (shell_str) - 1;
-    struct variable *mshp = lookup_variable ("MAKESHELL", 9);
+  struct variable* mshp = _lookup_variable("MAKESHELL");
+  if (mshp) {
+	  (void)define_variable(shell_str, shlen, mshp->value, o_env_override, 0);
+	  shell_set(mshp->value, "MAKESHELL ENV var");
+  }
+  struct variable* nmshp = _lookup_variable("NOMAKESHELLS");
+  if (nmshp)
+	  shell_set_banned_shells(nmshp->value);
+  struct variable* dmshp = _lookup_variable("DEFAULTMAKESHELL");
+  if (dmshp)
+	  shell_set_user_default_shell(dmshp->value);
+#if MK_OS_DOS || MK_OS_W32
+  {
     struct variable *comp = lookup_variable ("COMSPEC", 7);
 
     /* $(MAKESHELL) overrides $(SHELL) even if -e is in effect.  */
-    if (mshp)
-      (void) define_variable (shell_str, shlen,
-                              mshp->value, o_env_override, 0);
-    else if (comp)
+
+     if (!mshp && comp)
       {
         /* $(COMSPEC) shouldn't override $(SHELL).  */
         struct variable *shp = lookup_variable (shell_str, shlen);
@@ -1020,7 +1030,7 @@ define_automatic_variables (void)
 
   /* This won't override any definition, but it will provide one if there
      isn't one there.  */
-  v = define_variable_cname ("SHELL", default_shell, o_default, 0);
+  v = define_variable_cname ("SHELL", shell_get_default(), o_default, 0);
 #if MK_OS_DOS
   v->export = v_export;  /*  Export always SHELL.  */
 #endif
@@ -1031,7 +1041,7 @@ define_automatic_variables (void)
      that problem above. */
 #if !MK_OS_DOS && !MK_OS_OS2
   /* Don't let SHELL come from the environment.  */
-  if (*v->value == '\0' || v->origin == o_env || v->origin == o_env_override)
+  if (*v->value == '\0' || v->origin == o_env) // if they explicitly use the ENV override var MAKESHELL we should always trust it.
     {
       free (v->value);
       v->origin = o_file;
@@ -1626,20 +1636,21 @@ do_variable_definition (const floc *flocp, const char *varname, const char *valu
   if ((origin == o_file || origin == o_override || origin == o_command)
       && streq (varname, "SHELL"))
     {
-      extern const char *default_shell;
 
       /* Call shell locator function. If it returns TRUE, then
          set no_default_sh_exe to indicate sh was found and
          set new value for SHELL variable.  */
 
-      if (find_and_set_default_shell (newval))
+		  if (shell_is_banned(newval))
+			v = _lookup_variable(varname);
+		  else if ( shell_set_and_detect(newval, "do_variable_definition: SHELL variable read"))
         {
-          v = define_variable_in_set (varname, strlen (varname), default_shell,
+			  v = define_variable_in_set(varname, strlen(varname), shell_get_default(),
                                       origin, flavor == f_recursive,
                                       (scope == s_global ? NULL
                                        : current_variable_set_list->set),
                                       flocp);
-          no_default_sh_exe = 0;
+			  shell_info.have_no_default_sh_exe = 0;
         }
       else
         {
@@ -1647,17 +1658,18 @@ do_variable_definition (const floc *flocp, const char *varname, const char *valu
 
           alloc_value = allocated_expand_string (newval);
 
-          if (find_and_set_default_shell (alloc_value))
+			  if (shell_is_banned(newval))
+				  v = _lookup_variable(varname);
+			  else if ( shell_set_and_detect(alloc_value, "do_variable_definition: SHELL variable read and expanded in makefile"))
             {
               v = define_variable_in_set (varname, strlen (varname), newval,
                                           origin, flavor == f_recursive,
                                           (scope == s_global ? NULL
                                            : current_variable_set_list->set),
                                           flocp);
-              no_default_sh_exe = 0;
+				  shell_info.have_no_default_sh_exe = 0;
             }
-          else
-            v = lookup_variable (varname, strlen (varname));
+
 
           free (tp);
         }

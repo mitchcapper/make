@@ -15,8 +15,9 @@ You should have received a copy of the GNU General Public License along with
 this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
-
+#include "wlb_debug.h"
 #include <assert.h>
+#include "filename.h"
 #if MK_OS_W32
 # include <windows.h>
 # include <io.h>
@@ -132,6 +133,7 @@ int verify_flag;
 static int silent_flag;
 static const int default_silent_flag = 0;
 static enum variable_origin silent_origin = o_default;
+extern shell_info_t shell_info = { 0 };
 
 /* Nonzero means either -s was given, or .SILENT-with-no-deps was seen.  */
 
@@ -577,10 +579,7 @@ struct variable * default_goal_var;
 
 struct file *default_file;
 
-/* Nonzero if we have seen the magic '.POSIX' target.
-   This turns on pedantic compliance with POSIX.2.  */
 
-int posix_pedantic;
 
 /* Nonzero if we have seen the '.SECONDEXPANSION' target.
    This turns on secondary expansion of prerequisites.  */
@@ -773,10 +772,10 @@ expand_command_line_file (const char *name)
   /* This is also done in parse_file_seq, so this is redundant
      for names read from makefiles.  It is here for names passed
      on the command line.  */
-  while (name[0] == '.' && name[1] == '/')
+  while (name[0] == '.' && ISSLASH(name[1]))
     {
       name += 2;
-      while (name[0] == '/')
+      while (ISSLASH(name[0]))
         /* Skip following slashes: ".//foo" is "foo", not "/foo".  */
         ++name;
     }
@@ -1009,143 +1008,7 @@ handle_runtime_exceptions (struct _EXCEPTION_POINTERS *exinfo)
   return (255); /* not reached */
 #endif
 }
-
-/*
- * On W32 systems we don't have the luxury of a /bin directory that
- * is mapped globally to every drive mounted to the system. Since make could
- * be invoked from any drive, and we don't want to propagate /bin/sh
- * to every single drive. Allow ourselves a chance to search for
- * a value for default shell here (if the default path does not exist).
- */
-
-int
-find_and_set_default_shell (const char *token)
-{
-  int sh_found = 0;
-  char *atoken = 0;
-  const char *search_token;
-  const char *tokend;
-  extern const char *default_shell;
-
-  if (!token)
-    search_token = default_shell;
-  else
-    search_token = atoken = xstrdup (token);
-
-  /* If the user explicitly requests the DOS cmd shell, obey that request.
-     However, make sure that's what they really want by requiring the value
-     of SHELL either equal, or have a final path element of, "cmd" or
-     "cmd.exe" case-insensitive.  */
-  tokend = search_token + strlen (search_token) - 3;
-  if (((tokend == search_token
-        || (tokend > search_token && ISDIRSEP (tokend[-1])))
-       && !strcasecmp (tokend, "cmd"))
-      || ((tokend - 4 == search_token
-           || (tokend - 4 > search_token && ISDIRSEP (tokend[-5])))
-          && !strcasecmp (tokend - 4, "cmd.exe")))
-    {
-      batch_mode_shell = 1;
-      unixy_shell = 0;
-      default_shell = xstrdup (w32ify (search_token, 0));
-      DB (DB_VERBOSE, (_("find_and_set_shell() setting default_shell = %s\n"),
-                       default_shell));
-      sh_found = 1;
-    }
-  else if (!no_default_sh_exe
-           && (token == NULL || !strcmp (search_token, default_shell)))
-    {
-      /* no new information, path already set or known */
-      sh_found = 1;
-    }
-  else if (_access (search_token, 0) == 0)
-    {
-      /* search token path was found */
-      default_shell = xstrdup (w32ify (search_token, 0));
-      DB (DB_VERBOSE, (_("find_and_set_shell() setting default_shell = %s\n"),
-                       default_shell));
-      sh_found = 1;
-    }
-  else
-    {
-      char *p;
-      struct variable *v = lookup_variable (STRING_SIZE_TUPLE ("PATH"));
-
-      /* Search Path for shell */
-      if (v && v->value)
-        {
-          char *ep;
-
-          p  = v->value;
-          ep = strchr (p, PATH_SEPARATOR_CHAR);
-
-          while (ep && *ep)
-            {
-              int sh_pathlen;
-              PATH_VAR (sh_path);
-
-              *ep = '\0';
-
-              sh_pathlen = snprintf (sh_path, GET_PATH_MAX, "%s/%s",
-                                     p, search_token);
-              if (0 <= sh_pathlen && sh_pathlen < GET_PATH_MAX
-                  && _access (sh_path, 0) == 0)
-                {
-                  default_shell = xstrdup (w32ify (sh_path, 0));
-                  sh_found = 1;
-                  *ep = PATH_SEPARATOR_CHAR;
-
-                  /* terminate loop */
-                  p += strlen (p);
-                }
-              else
-                {
-                  *ep = PATH_SEPARATOR_CHAR;
-                  p = ++ep;
-                }
-
-              ep = strchr (p, PATH_SEPARATOR_CHAR);
-            }
-
-          /* be sure to check last element of Path */
-          if (p && *p)
-            {
-              int sh_pathlen;
-
-              PATH_VAR (sh_path);
-              sh_pathlen = snprintf (sh_path, GET_PATH_MAX, "%s/%s",
-                                     p, search_token);
-              if (0 <= sh_pathlen && sh_pathlen < GET_PATH_MAX
-                  && _access (sh_path, 0) == 0)
-                {
-                  default_shell = xstrdup (w32ify (sh_path, 0));
-                  sh_found = 1;
-                }
-            }
-
-          if (sh_found)
-            DB (DB_VERBOSE,
-                (_("find_and_set_shell() path search set default_shell = %s\n"),
-                 default_shell));
-        }
-    }
-
-  /* naive test */
-  if (!unixy_shell && sh_found
-      && (strstr (default_shell, "sh") || strstr (default_shell, "SH")))
-    {
-      unixy_shell = 1;
-      batch_mode_shell = 0;
-    }
-
-#ifdef BATCH_MODE_ONLY_SHELL
-  batch_mode_shell = 1;
 #endif
-
-  free (atoken);
-
-  return (sh_found);
-}
-#endif  /* MK_OS_W32 */
 
 #if MK_OS_DOS
 static void
@@ -1189,8 +1052,7 @@ extern char **environ;
 int
 main (int argc, char **argv)
 #else
-int
-main (int argc, char **argv, char **envp)
+int main (int argc, char **argv, char **envp)
 #endif
 {
   int makefile_status = MAKE_SUCCESS;
@@ -1206,8 +1068,6 @@ main (int argc, char **argv, char **envp)
   SetUnhandledExceptionFilter (handle_runtime_exceptions);
 
   /* start off assuming we have no shell */
-  unixy_shell = 0;
-  no_default_sh_exe = 1;
 #endif
 
   initialize_variable_output ();
@@ -1380,7 +1240,7 @@ main (int argc, char **argv, char **envp)
         /* Need to know if CRTL set to report UNIX paths.  Use getcwd as
            it works on all versions of VMS. */
         pwd = getcwd(pwdbuf, 256);
-        if (pwd[0] == '/')
+        if ( ISSLASH(pwd[0]) )
           vms_report_unix_paths = 1;
 
         vms_use_mcr_command = get_vms_env_flag ("GNV$MAKE_USE_MCR", 0);
@@ -1413,7 +1273,7 @@ main (int argc, char **argv, char **envp)
       if (need_vms_symbol () && !vms_use_mcr_command)
         create_foreign_command (program_name, argv[0]);
 #else
-      program = strrchr (argv[0], '/');
+      program = LAST_SLASH_IN_PATH (argv[0]);
       if (program == 0)
         program = argv[0];
       else
@@ -1743,19 +1603,19 @@ main (int argc, char **argv, char **envp)
      program that uses a non-absolute name.  */
   if (current_directory[0] != '\0'
       && argv[0] != 0
-      && (argv[0][0] != '/' && (argv[0][0] == '\0' || argv[0][1] != ':'))
+      && (! IS_ABSOLUTE_FILE_NAME(argv[0][0]))
 # if MK_OS_OS2
       /* do not prepend cwd if argv[0] contains no '/', e.g. "make" */
-      && (strchr (argv[0], '/') != 0 || strchr (argv[0], '\\') != 0)
+      && (LAST_SLASH_IN_PATH (argv[0]) != 0)
 # endif
       )
     argv[0] = xstrdup (concat (3, current_directory, "/", argv[0]));
 #else  /* !MK_OS_DOS */
   if (current_directory[0] != '\0'
-      && argv[0] != 0 && argv[0][0] != '/' && strchr (argv[0], '/') != 0
+      && argv[0] != 0 && ! ISSLASH( argv[0][0] ) && LAST_SLASH_IN_PATH (argv[0]) != 0
 #ifdef HAVE_DOS_PATHS
-      && (argv[0][0] != '\\' && (!argv[0][0] || argv[0][1] != ':'))
-      && strchr (argv[0], '\\') != 0
+      && (! IS_ABSOLUTE_FILE_NAME(argv[0]))
+      && LAST_SLASH_IN_PATH (argv[0]) != 0
 #endif
       )
     argv[0] = xstrdup (concat (3, current_directory, "/", argv[0]));
@@ -1797,7 +1657,7 @@ main (int argc, char **argv, char **envp)
    * lookups to fail because the current directory (.) was pointing
    * at the wrong place when it was first evaluated.
    */
-  no_default_sh_exe = !find_and_set_default_shell (NULL);
+  shell_check_change(NULL, 1);
 #endif /* MK_OS_W32 */
 
   /* If we chdir'ed, figure out where we are now.  */
@@ -2124,31 +1984,10 @@ main (int argc, char **argv, char **envp)
 
 #if MK_OS_W32
   /* look one last time after reading all Makefiles */
-  if (no_default_sh_exe)
-    no_default_sh_exe = !find_and_set_default_shell (NULL);
+  if (shell_info.have_no_default_sh_exe)
+	  shell_check_change(NULL, 1);
 #endif /* MK_OS_W32 */
 
-#if MK_OS_DOS || MK_OS_OS2 || MK_OS_VMS
-  /* We need to know what kind of shell we will be using.  */
-  {
-    extern int _is_unixy_shell (const char *_path);
-    struct variable *shv = lookup_variable (STRING_SIZE_TUPLE ("SHELL"));
-    extern int unixy_shell;
-    extern const char *default_shell;
-
-    if (shv && *shv->value)
-      {
-        char *shell_path = recursively_expand (shv);
-
-        if (shell_path && _is_unixy_shell (shell_path))
-          unixy_shell = 1;
-        else
-          unixy_shell = 0;
-        if (shell_path)
-          default_shell = shell_path;
-      }
-  }
-#endif /* MK_OS_DOS || MK_OS_OS2 */
 
   /* Final jobserver configuration.
 
@@ -3682,7 +3521,7 @@ define_makeflags (int makefile)
        $(MAKEOVERRIDES), which contains command-line variable definitions.
        Separate the variables from the switches with a "--" arg.  */
 
-    const char *r = posix_pedantic ? posixref : ref;
+    const char *r = shell_info.posix_pedantic ? posixref : ref;
     size_t l = strlen (r);
     v = lookup_variable (r, l);
     if (v && v->value && v->value[0] != '\0')
@@ -3901,6 +3740,6 @@ die (int status)
           _x = chdir (directory_before_chdir);
         }
     }
-
+  DisableDebugAssertPopup();
   exit (status);
 }

@@ -1,3 +1,8 @@
+
+
+
+
+
 /* Job execution and handling for GNU Make.
 Copyright (C) 1988-2024 Free Software Foundation, Inc.
 This file is part of GNU Make.
@@ -15,39 +20,65 @@ You should have received a copy of the GNU General Public License along with
 this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
-
+#include "debug.h"
 #include <assert.h>
 #include <string.h>
 #include "filename.h"
+#include "pathstuff.h"
+#include "variable.h"
 /* Default shell to use.  */
 #if MK_OS_W32
 # include <windows.h>
 
-const char *default_shell = "sh.exe";
-int no_default_sh_exe = 1;
-int batch_mode_shell = 1;
+int patheq(const char* p1, const char* p2) {
+#if ! defined(HAVE_CASE_INSENSITIVE_FS) && ! defined(_WIN32)
+	return streq(p1, p2);
+#elif _WIN32 //may or may not also have case insensitive comiple flag
+	if (p1 == p2)
+		return 1;
+	if (!p1 || !p2)
+		return 0;
+	while ( *p1 || *p2 ) {
+		if (*p1 == '\0' || *p2 == '\0')
+			return 0;
+		if (ISSLASH(*p1)) {
+			if (! ISSLASH(*p2))
+				return 0;
+		}
+		else {
+#ifdef HAVE_CASE_INSENSITIVE_FS
+			if (tolower(*p1) != tolower(*p2))
+				return 0;
+#else
+			if (*p1 != *p2)
+				return 0;
+#endif // HAVE_CASE_INSENSITIVE_FS
+
+		}
+		p1++;
+		p2++;
+	}
+	return 1;
+
+#else //not windows but case insensitive requested
+	return ((p1) == (p2) \
+		|| (tolower((unsigned char)*(p1)) == tolower((unsigned char)*(p2)) \
+			&& (*(p1) == '\0' || !strcasecmp((p1)+1, (p2)+1))));
+#endif
+
+}
+static void _shell_set(const char* shell, const char* by_what, int user_set);
+static int expand_executable_in_path(const char* path, char* dst_buffer, size_t dst_buffer_size, int skip_initial_access_check);
+static int shell_fully_qualify_path(const char* path);
+static void shell_init_defaults();
+
 HANDLE main_thread;
 
-#elif MK_OS_DOS
-
-/* The default shell is a pointer so we can change it if Makefile
-   says so.  It is without an explicit path so we get a chance
-   to search the $PATH for it (since MSDOS doesn't have standard
-   directories we could trust).  */
-const char *default_shell = "command.com";
-int batch_mode_shell = 0;
-
-#elif MK_OS_OS2
-
-const char *default_shell = "/bin/sh";
-int batch_mode_shell = 0;
 
 #elif MK_OS_VMS
 
 # include <descrip.h>
 # include <stsdef.h>
-const char *default_shell = "";
-int batch_mode_shell = 0;
 
 #define strsignal vms_strsignal
 char * vms_strsignal (int status);
@@ -60,9 +91,6 @@ char * vms_strsignal (int status);
 #endif
 
 #else
-
-const char *default_shell = "/bin/sh";
-int batch_mode_shell = 0;
 
 #endif
 
@@ -83,6 +111,346 @@ int dos_command_running;
 static void vmsWaitForChildren (int *);
 #endif
 
+/// <summary>
+/// Check if a shell may potentially change the current shell can pass NULL for shell if only signalling that directory change has happened
+/// </summary>
+/// <param name="new_shell"></param>
+/// <param name="dir_may_have_changed"></param>
+/// <returns>0 for no change,1 may have changed but equal to old shell (old shell likely relative), 2 for may have changed not equal old shell</returns>
+int shell_check_change(const char * new_shell, int dir_may_have_changed) {
+
+	if (dir_may_have_changed && shell_info.is_relative_path)
+		shell_info._shell_detected = 0;
+
+	if (new_shell && shell_is_banned(new_shell))
+		return 0;
+
+	if (shell_info.full_path != NULL && strcmp(new_shell, shell_info.full_path))
+		return 2;
+
+	if (
+		new_shell == NULL ||
+		(shell_info.initial_value_set_by_user != NULL && strcmp(new_shell, shell_info.initial_value_set_by_user) == 0)
+		) {
+		if (shell_info.have_no_default_sh_exe == 0 && shell_info.is_relative_path && dir_may_have_changed)//while we won't notify the user for the same path being set for the shell we will invalidate its detection if we set it again and its a relative path
+			return 1;
+		else
+			return 0;
+	}
+	
+	return 2;
+}
+
+static void shell_init_defaults() {
+	shell_info._defaults_inited = 1;
+	shell_info.have_no_default_sh_exe = 1;
+#if MK_OS_W32
+	shell_info.default_shell = "gsh.exe";
+#elif MK_OS_DOS
+	shell_info.default_shell = "cmd.exe";
+#else
+	shell_info.default_shell = "/bin/sh";
+#endif
+}
+/// <summary>
+/// Sets the shell and runs a detect
+/// </summary>
+/// <param name="shell"></param>
+/// <param name="by_what"></param>
+/// <returns>shell type detected, 0 is on default due to failure, 1 is set but was set to the default shell, 2 is non-default shell</returns>
+int shell_set_and_detect(const char* shell, const char* by_what) {
+	shell_set(shell, by_what);
+	return shell_detect_features();
+}
+/// <summary>
+/// sets the shell to a new value, will set shell_info.have_no_default_sh_exe to 0
+/// </summary>
+/// <param name="shell"></param>
+/// <param name="by_what"></param>
+void shell_set(const char* shell, const char * by_what) {
+	_shell_set(shell, by_what, 1);
+}
+int shells_equal(const char* s1, const char* s2) {
+	if (s1 == s2)
+		return 1;
+	if (s1 == 0 || s2 == 0)
+		return 0;
+	if (strcmp(s1, s2) == 0)//might as well check the likely of same for both
+		return 1;
+
+	PATH_VAR(expanded);
+	PATH_VAR(s1_full);
+	PATH_VAR(s2_full);
+	expand_executable_in_path(s1, expanded, sizeof(expanded),0);
+	_fullpath(s1_full, expanded, sizeof(s1_full));
+	expand_executable_in_path(s2, expanded, sizeof(expanded), 0);
+	_fullpath(s2_full, expanded, sizeof(s2_full));
+	return patheq(s1_full, s2_full);
+}
+
+int shell_is_banned(const char* shell) {
+	if (!shell || shell[0] == '\0' || shell_info.banned_shells[0] == '\0')
+		return 0;
+	PATH_VAR(lookup);
+	sprintf_s(lookup, sizeof(lookup), ";%s;",shell);
+	int ret;
+#if defined(HAVE_CASE_INSENSITIVE_FS)
+	ret = strcasestr(shell_info.banned_shells, lookup) != NULL;
+#else
+	ret = strstr(shell_info.banned_shells, lookup) != NULL;
+#endif
+	if (ret)
+		DB(DB_VERBOSE, (_("shell_is_banned() shell attempted to be set to banned shell ignoring: %s\n"), shell));
+	return ret;
+}
+void shell_set_user_default_shell(const char* shell) {
+	if (shell_info.user_defined_default_shell)
+		free(shell_info.user_defined_default_shell);
+	shell_info.user_defined_default_shell = strdup(shell);
+	w32ify(shell_info.user_defined_default_shell,0);
+}
+void shell_set_banned_shells(const char* shell) {
+	sprintf_s(shell_info.banned_shells, sizeof(shell_info.banned_shells), ";%s;", shell);
+}
+
+
+void shell_call_flags_set(const char* user_flags) {
+	if (!shell_info._defaults_inited)//not explicitly required but why not
+		shell_init_defaults();
+	if (shell_info.user_call_args != NULL) {
+		free(shell_info.user_call_args);
+		shell_info.user_call_args = NULL;
+	}
+	if (user_flags)
+		shell_info.user_call_args = strdup(user_flags);
+}
+/// <summary>
+/// only has effect if the user call flags are not in use, and the shell is a unixy type shell
+/// </summary>
+/// <param name="val"></param>
+void shell_posix_pedantic_set(int val) {
+	shell_info.posix_pedantic = val;
+}
+const char* shell_get_flags(int no_error_mode) {
+	if (!shell_info._defaults_inited)//not explicitly required but why not
+		shell_init_defaults();
+	shell_get_for_use();
+	if (shell_info.user_call_args)
+		return shell_info.user_call_args;
+	if (shell_info.posix_pedantic && shell_info.unixy && !no_error_mode) {
+		if (shell_info._alt_flags_buffer[0] == 0){ //right now the buffer is only used for pendantic so if its set we can just return it
+			strcpy_s(shell_info._alt_flags_buffer, sizeof(shell_info._alt_flags_buffer), shell_info.call_args);
+			strcat_s(shell_info._alt_flags_buffer, sizeof(shell_info._alt_flags_buffer), 'e');
+		}
+		return shell_info._alt_flags_buffer;
+	}
+	return shell_info.call_args;
+}
+/// <summary>
+/// actual update shell info with internal handler flag, when set by the user we don't update the actual value set by the user just other fields
+/// </summary>
+/// <param name="shell"></param>
+/// <param name="by_what"></param>
+/// <param name="user_set">true if set by the user, false if we are setting internally (forced default or full path qualification)</param>
+static void _shell_set(const char* shell, const char* by_what, int user_set) {
+	if (!shell_info._defaults_inited)
+		shell_init_defaults();
+
+
+
+	int shell_change_detect = shell_check_change(shell, 0);
+	if (!shell_change_detect)
+		return;
+	shell_info._shell_detected = 0;
+	if (shell_change_detect == 1) { //only change would be due to the dir change but the shell itself didnt so no need to udpate anything
+		if (user_set && shell_info.is_relative_path && shell_info.full_path != NULL) {
+			free(shell_info.full_path);
+			shell_info.full_path = NULL;
+		}
+		return;
+	}
+	
+
+	DB(DB_VERBOSE, (_("_shell_set() shell being set to = %s by %s\n"),shell, by_what));
+	shell_info._shell_detected = 0;
+	if (shell_info.full_path) {
+		free(shell_info.full_path);
+		shell_info.full_path = NULL;
+	}
+	if (user_set) {
+		if (shell_info.initial_value_set_by_user != NULL)
+			free(shell_info.initial_value_set_by_user);
+		shell = shell_info.initial_value_set_by_user = strdup(shell);
+		shell_info.is_relative_path = IS_ABSOLUTE_FILE_NAME(shell);
+		shell_info.have_no_default_sh_exe = 0;
+	} else
+		shell = shell_info.full_path = strdup(shell);
+}
+/// <summary>
+/// Called if we are going to use the shell, makes sure 
+/// </summary>
+/// <returns></returns>
+const char* shell_get_for_use() {
+	if (!shell_info._defaults_inited)
+		shell_init_defaults();
+
+	if (shell_info.initial_value_set_by_user != NULL && !shell_info._shell_detected)
+		shell_detect_features();
+
+	if (!shell_info.full_path) {
+		_shell_set(shell_info.default_shell, "shell_get_for_use: Could not find user provided shell and we need one, overriding with default", 0);
+		if (!shell_info._shell_detected)
+			shell_detect_features();
+	}
+	assert(shell_info.full_path);
+	return shell_info.full_path;
+}
+const char* shell_get_default() {
+	if (!shell_info._defaults_inited)
+		shell_init_defaults();
+	return shell_info.user_defined_default_shell ? shell_info.user_defined_default_shell : shell_info.default_shell;
+}
+/// <summary>
+/// Searches path for an executable, if not found buffer is filled with original path
+/// </summary>
+/// <param name="path"></param>
+/// <param name="dst_buffer"></param>
+/// <param name="dst_buffer_size"></param>
+/// <returns>0 for failure or 1 for found</returns>
+static int expand_executable_in_path(const char* path, char* dst_buffer, size_t dst_buffer_size, int skip_initial_access_check) {
+	if (!skip_initial_access_check && _access(path, 0) == 0) {
+		strcpy_s(dst_buffer, dst_buffer_size, path);
+		return 1;
+	}
+	
+	if (IS_ABSOLUTE_FILE_NAME(path)) { //we probably shouldn't actually expand absolute paths using the path, this is likely a breaking change
+		strcpy_s(dst_buffer, dst_buffer_size, path);
+		return 0;
+	}
+	char* p;
+	struct variable* v = lookup_variable(STRING_SIZE_TUPLE("PATH"));
+
+	/* Search Path for shell */
+	if (v && v->value)
+	{
+		char* ep;
+
+		p = v->value;
+		ep = strchr(p, PATH_SEPARATOR_CHAR);
+
+		while (ep && *ep)
+		{
+
+			*ep = '\0';
+
+			snprintf(dst_buffer, dst_buffer_size, "%s/%s", p, path);
+			if (_access(dst_buffer, 0) == 0)
+			{
+				*ep = PATH_SEPARATOR_CHAR;
+				return 1;
+			}
+			else
+			{
+				*ep = PATH_SEPARATOR_CHAR;
+				p = ++ep;
+			}
+			ep = strchr(p, PATH_SEPARATOR_CHAR);
+		}
+
+		/* be sure to check last element of Path */
+		if (p && *p)
+		{
+			snprintf(dst_buffer, dst_buffer_size, "%s/%s", p, path);
+			if (_access(dst_buffer, 0) == 0)
+			{
+				return 1;
+			}
+		}
+
+	}
+	strcpy_s(dst_buffer, dst_buffer_size, path);
+	return 0;
+}
+/// <summary>
+/// search path for the shell, note may result in shell_detected set to 0 if path changed, sets if path is absolute or not
+/// </summary>
+/// <returns>0 for failure or 1 for found</returns>
+static int shell_fully_qualify_path(const char * path) {
+	PATH_VAR(sh_path);
+	if (_access(path, 0) == 0) {
+		if (path != shell_info.full_path)
+			shell_info.full_path = xstrdup(path);
+		return 1;
+	}
+	if (!expand_executable_in_path(path, sh_path, sizeof(sh_path), 1))
+		return 0;
+	_shell_set(sh_path, "shell_fully_qualify_path() found in system PATH", 0);
+}
+/// <summary>
+/// Detects and validates the shell, if the same name as the current shell it is not re-run
+/// </summary>
+/// <returns>shell type detected, 0 not set due to failure will use default if required, 1 is set but was set to the default shell, 2 is non-default shell</returns>
+int shell_detect_features() {
+	if (shell_info._shell_detected)
+		return;
+	shell_info._shell_detected = 1;
+	if (shell_info.full_path == NULL && shell_info.initial_value_set_by_user == NULL)
+		return 0;
+	//const char* name_start = LAST_SLASH_IN_PATH(shell_info.full_path);
+	//if (! name_start)
+	//	name_start = shell_info.full_path;
+
+	//int is_default_shell = stricmp(shell_info.full_path, shell_info.default_shell) == 0;
+	////we are basically only altered by win32 so can just always do case insenstivie
+	//if (stricmp(shell_info.executable_name, name_start) == 0 && (is_default_shell || shell_info.have_no_default_sh_exe != 0)) //if we are the same shell as last time we were detected do no re-run detection, unless a manual shell has yet to be specified.  If we haven't set a manual shell we want to rerun detection as directory may have changed.
+	//	return shell_info.have_no_default_sh_exe ? 0 : (is_default_shell ? 1 : 2);
+	//
+	const char* check_shell = shell_info.full_path ? shell_info.full_path : shell_info.initial_value_set_by_user;
+	int is_default_shell = check_shell && strcmp(check_shell, shell_info.default_shell) == 0;
+	if (!check_shell || ! shell_fully_qualify_path(check_shell)) {
+		if (! is_default_shell)
+			return 0;
+		else
+			assert(0);//full_shell_path == default_shell yet we can't find it, maybe the os knows magically, maybe we should be checking extensions? assert for debug otehrwise we blindly trust
+	}
+	else {
+		w32ify(shell_info.full_path, 0);
+	}
+
+	shell_info.is_cmd_exe = shell_info.unixy = shell_info.use_batchfile = 0;
+	if (shell_info.executable_name)
+		free(shell_info.executable_name);
+	const char* name_start = LAST_SLASH_IN_PATH(shell_info.full_path);
+	if (! name_start)
+		name_start = shell_info.full_path;
+	shell_info.executable_name = xstrdup(name_start);
+
+
+
+#if MK_OS_W32 || MK_OS_DOS
+	if (strcasecmp(shell_info.executable_name, "cmd.exe") == 0 || strcasecmp(shell_info.executable_name, "cmd") == 0 || strcasecmp(shell_info.executable_name, "command.com") == 0) {
+		shell_info.is_cmd_exe = 1;
+		shell_info.use_batchfile = 1;
+		shell_info.call_args = "/c";
+	}
+	else if (strcasecmp(shell_info.executable_name, "pwsh.exe") == 0 || strcasecmp(shell_info.executable_name, "pwsh") == 0 || strcasecmp(shell_info.executable_name, "powershell") == 0 || strcasecmp(shell_info.executable_name, "powershell.exe") == 0) {
+		shell_info.call_args = "-Command";
+	} else {
+#endif // MK_OS_W32 
+		shell_info.unixy = 1;
+		shell_info.call_args = "-c";
+		//shell_info._alt_flags_buffer[0] = 0; //if our flags could ever be anything other than -c we would want to clear this to make sure it is reset on pull with our shell change, but right now that is the only alt we have
+#if MK_OS_W32 || MK_OS_DOS
+	}
+#endif
+	
+#ifdef BATCH_MODE_ONLY_SHELL
+	shell_info.use_batchfile = 1
+#endif
+	w32ify(shell_info.full_path, 0);
+	return is_default_shell ? 1 : 2;
+		
+}
 #if MK_OS_W32
 # include <windows.h>
 # include <io.h>
@@ -235,8 +603,6 @@ static int good_stdin_used = 0;
 static struct child *waiting_jobs = 0;
 
 /* Non-zero if we use a *real* shell (always so on Unix).  */
-
-int unixy_shell = 1;
 
 /* Number of jobs started in the current second.  */
 
@@ -1144,8 +1510,7 @@ free_child (struct child *child)
    for calling 'unblock_sigs', once the new child is safely on the chain so
    it can be cleaned up in the event of a fatal signal.  */
 
-static void
-start_job_command (struct child *child)
+static void start_job_command (struct child *child)
 {
   int flags;
   char *p;
@@ -1348,9 +1713,9 @@ start_job_command (struct child *child)
      printed, etc.  */
 
 #if !MK_OS_VMS
-  if (
+  if ( 
 #if MK_OS_DOS || MK_OS_OS2
-      unixy_shell       /* the test is complicated and we already did it */
+	  shell_info.unixy       /* the test is complicated and we already did it */
 #else
       (argv[0] && is_bourne_compatible_shell (argv[0]))
 #endif
@@ -1476,7 +1841,7 @@ start_job_command (struct child *child)
 
         /* If we have a *real* shell, tell 'system' to call
            it to do everything for us.  */
-        if (unixy_shell)
+        if (shell_info.unixy)
           {
             /* A *real* shell on MSDOS may not support long
                command lines the DJGPP way, so we must use 'system'.  */
@@ -2446,7 +2811,7 @@ child_execute_job (struct childbase *child, int good_stdin, char **argv)
         ++l;
 
       nargv = xmalloc (sizeof (char *) * (l + 3));
-      nargv[0] = (char *)default_shell;
+      nargv[0] = (char *) shell_get_for_use();
       nargv[1] = cmd;
       memcpy (&nargv[2], &argv[1], sizeof (char *) * l);
 
@@ -2617,15 +2982,16 @@ exec_command (char **argv, char **envp)
           ++argc;
 
 # if MK_OS_OS2
-        if (!unixy_shell)
+        if (!shell_info.unixy)
           ++argc;
 # endif
-
+		shell_set(shell);
+		shell = shell_get_for_use();
         new_argv = alloca ((1 + argc + 1) * sizeof (char *));
         new_argv[0] = (char *)shell;
 
 # if MK_OS_OS2
-        if (!unixy_shell)
+        if (!shell_info.unixy)
           {
             new_argv[1] = (char *)"/c";
             ++i;
@@ -2694,8 +3060,7 @@ exec_command (char **argv, char **envp)
    the strings, so to free you free the 0'th element then the returned pointer
    (see the FREE_ARGV macro).  */
 
-static char **
-construct_command_argv_internal (char *line, char **restp, const char *shell,
+static char ** construct_command_argv_internal (char *line, char **restp, const char *shell,
                                  const char *shellflags, const char *ifs,
                                  int flags, char **batch_filename UNUSED)
 {
@@ -2829,8 +3194,8 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
   char *argstr = 0;
 #if MK_OS_W32
   int slow_flag = 0;
-
-  if (!unixy_shell)
+  shell_get_for_use();//ensure it is detected
+  if (!shell_info.unixy)
     {
       sh_cmds = sh_cmds_dos;
       sh_chars = sh_chars_dos;
@@ -2853,14 +3218,14 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
 
   /* See if it is safe to parse commands internally.  */
   if (shell == 0)
-    shell = default_shell;
+    shell = shell_get_for_use();
 #if MK_OS_W32
-  else if (strcmp (shell, default_shell))
+  else if (strcmp (shell, shell_get_default()))
   {
     char *s1 = _fullpath (NULL, shell, 0);
-    char *s2 = _fullpath (NULL, default_shell, 0);
+    char *s2 = _fullpath (NULL, shell_get_default(), 0);
 
-    slow_flag = strcmp ((s1 ? s1 : ""), (s2 ? s2 : ""));
+    slow_flag = shells_equal((s1 ? s1 : ""), (s2 ? s2 : ""));
 
     free (s1);
     free (s2);
@@ -2869,18 +3234,18 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
     goto slow;
 #else  /* not MK_OS_W32 */
 #if MK_OS_DOS || MK_OS_OS2
-  else if (strcasecmp (shell, default_shell))
+  else if (strcasecmp (shell, shell_get_default()))
     {
       extern int _is_unixy_shell (const char *_path);
 
       DB (DB_BASIC, (_("$SHELL changed (was '%s', now '%s')\n"),
-                     default_shell, shell));
-      unixy_shell = _is_unixy_shell (shell);
+		  shell_get_default(), shell));
+	  shell_info.unixy = _is_unixy_shell (shell);
       /* we must allocate a copy of shell: construct_command_argv() will free
        * shell after this function returns.  */
-      default_shell = xstrdup (shell);
+      shell_set( shell , "construct_command_argv_internal");
     }
-  if (unixy_shell)
+  if (shell_info.unixy)
     {
       sh_chars = sh_chars_sh;
       sh_cmds  = sh_cmds_sh;
@@ -2898,7 +3263,7 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
 # endif
     }
 #else  /* !MK_OS_DOS */
-  else if (strcmp (shell, default_shell))
+  else if (strcmp (shell, shell_get_default()))
     goto slow;
 #endif /* !MK_OS_DOS && !MK_OS_OS2 */
 #endif /* not MK_OS_W32 */
@@ -2908,10 +3273,10 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
       if (*cap != ' ' && *cap != '\t' && *cap != '\n')
         goto slow;
 
-  if (shellflags)
-    if (shellflags[0] != '-'
-        || ((shellflags[1] != 'c' || shellflags[2] != '\0')
-            && (shellflags[1] != 'e' || shellflags[2] != 'c' || shellflags[3] != '\0')))
+  if (shell_info.call_args)
+    if (shell_info.call_args[0] != '-'
+        || ((shell_info.call_args[1] != 'c' || shell_info.call_args[2] != '\0')
+            && (shell_info.call_args[1] != 'e' || shell_info.call_args[2] != 'c' || shell_info.call_args[3] != '\0')))
       goto slow;
 
   i = strlen (line) + 1;
@@ -2951,7 +3316,7 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
                  pre-POSIX behavior of removing the backslash-newline.  */
               if (instring == '"'
 #if MK_OS_DOS || MK_OS_OS2 || MK_OS_W32
-                  || !unixy_shell
+                  || !shell_info.unixy
 #endif
                   )
                 ++p;
@@ -2971,12 +3336,12 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
              If we see any of those, punt.
              But on MSDOS, if we use COMMAND.COM, double and single
              quotes have the same effect.  */
-          else if (instring == '"' && strchr ("\\$`", *p) != 0 && unixy_shell)
+          else if (instring == '"' && strchr ("\\$`", *p) != 0 && shell_info.unixy)
             goto slow;
 #if MK_OS_W32
           /* Quoted wildcard characters must be passed quoted to the
              command, so give up the fast route.  */
-          else if (instring == '"' && strchr ("*?", *p) != 0 && !unixy_shell)
+          else if (instring == '"' && strchr ("*?", *p) != 0 && !shell_info.unixy)
             goto slow;
           else if (instring == '"' && strncmp (p, "\\\"", 2) == 0)
             *ap++ = *++p;
@@ -3004,7 +3369,7 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
                first word with no equals sign in it.  This is not the case
                with sh -k, but we never get here when using nonstandard
                shell flags.  */
-            if (! seen_nonequals && unixy_shell)
+            if (! seen_nonequals && shell_info.unixy)
               goto slow;
             word_has_equals = 1;
             *ap++ = '=';
@@ -3027,7 +3392,7 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
 #if MK_OS_W32
             /* Backslash before whitespace is not special if our shell
                is not Unixy.  */
-            else if (ISSPACE (p[1]) && !unixy_shell)
+            else if (ISSPACE (p[1]) && !shell_info.unixy)
               {
                 *ap++ = *p;
                 break;
@@ -3110,7 +3475,7 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
                       goto slow;
 #if MK_OS_OS2 || MK_OS_W32
                     /* Non-Unix shells are case insensitive.  */
-                    if (!unixy_shell
+                    if (!shell_info.unixy
                         && strcasecmp (sh_cmds[j], new_argv[0]) == 0)
                       goto slow;
 #endif
@@ -3204,7 +3569,7 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
 #endif
 
 # if MK_OS_OS2 /* is this necessary? */
-    if (!unixy_shell && shellflags)
+    if (!shell_info.unixy && shellflags)
       {
         size_t len = strlen (shellflags);
         char *shflags = alloca (len + 1);
@@ -3231,12 +3596,12 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
         /* Remove and ignore interior prefix chars [@+-] because they're
              meaningless given a single shell. */
 #if MK_OS_DOS || MK_OS_OS2
-        if (unixy_shell)     /* the test is complicated and we already did it */
+        if (shell_info.unixy)     /* the test is complicated and we already did it */
 #else
         if (is_bourne_compatible_shell (shell)
 #if MK_OS_W32
             /* If we didn't find any sh.exe, don't behave is if we did!  */
-            && !no_default_sh_exe
+            && !shell_info.have_no_default_sh_exe
 #endif
             )
 #endif
@@ -3427,7 +3792,7 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
                POSIX shell on DOS/Windows/OS2, mimic the pre-POSIX behavior
                and remove the backslash/newline.  */
 #if MK_OS_DOS || MK_OS_OS2 || MK_OS_W32
-# define PRESERVE_BSNL  unixy_shell
+# define PRESERVE_BSNL  shell_info.unixy
 #else
 # define PRESERVE_BSNL  1
 #endif
@@ -3437,7 +3802,7 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
                 /* Only non-batch execution needs another backslash,
                    because it will be passed through a recursive
                    invocation of this function.  */
-                if (!batch_mode_shell)
+                if (!shell_info.use_batchfile)
                   *(ap++) = '\\';
                 *(ap++) = '\n';
               }
@@ -3446,13 +3811,13 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
           }
 
         /* DOS shells don't know about backslash-escaping.  */
-        if (unixy_shell && !batch_mode_shell &&
+        if (shell_info.unixy && !shell_info.use_batchfile &&
             (*p == '\\' || *p == '\'' || *p == '"'
              || ISSPACE (*p)
              || strchr (sh_chars, *p) != 0))
           *ap++ = '\\';
 #if MK_OS_DOS
-        else if (unixy_shell && strneq (p, "...", 3))
+        else if (shell_info.unixy && strneq (p, "...", 3))
           {
             /* The case of '...' wildcard again.  */
             ap = stpcpy (ap, "\\.\\.\\");
@@ -3481,7 +3846,7 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
         new_argv[0] = xstrdup ("");
         new_argv[1] = NULL;
       }
-    else if ((no_default_sh_exe || batch_mode_shell) && batch_filename)
+    else if ((shell_info.have_no_default_sh_exe || shell_info.use_batchfile) && batch_filename)
       {
         int temp_fd;
         FILE* batch = NULL;
@@ -3490,7 +3855,7 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
 
         /* create a file name */
         sprintf (fbuf, "make%d", id);
-        *batch_filename = create_batch_file (fbuf, unixy_shell, &temp_fd);
+        *batch_filename = create_batch_file (fbuf, shell_info.unixy, &temp_fd);
 
         DB (DB_JOBS, (_("Creating temporary batch file %s\n"),
                       *batch_filename));
@@ -3499,17 +3864,17 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
            commands to be executed.  Put the batch file in TEXT mode.  */
         _setmode (temp_fd, _O_TEXT);
         batch = _fdopen (temp_fd, "wt");
-        if (!unixy_shell)
+        if (shell_info.is_cmd_exe)
           fputs ("@echo off\n", batch);
         fputs (command_ptr, batch);
         fputc ('\n', batch);
         fclose (batch);
         DB (DB_JOBS, (_("Batch file contents:%s\n\t%s\n"),
-                      !unixy_shell ? "\n\t@echo off" : "", command_ptr));
+                      shell_info.is_cmd_exe ? "\n\t@echo off" : "", command_ptr));
 
         /* create argv */
         new_argv = xmalloc (3 * sizeof (char *));
-        if (unixy_shell)
+        if (shell_info.unixy)
           {
             new_argv[0] = xstrdup (shell);
             new_argv[1] = *batch_filename; /* only argv[0] gets freed later */
@@ -3524,12 +3889,12 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
     else
 #endif /* MK_OS_W32 */
 
-    if (unixy_shell)
+    if (shell_info.unixy)
       new_argv = construct_command_argv_internal (new_line, 0, 0, 0, 0,
                                                   flags, 0);
 
 #if MK_OS_OS2
-    else if (!unixy_shell)
+    else if (!shell_info.unixy)
       {
         /* new_line is local, must not be freed therefore
            We use line here instead of new_line because we run the shell
@@ -3612,7 +3977,7 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
 #else
     else
       fatal (NILF, CSTRLEN (__FILE__) + INTSTR_LENGTH,
-             _("%s (line %d) Bad shell context (!unixy && !batch_mode_shell)\n"),
+             _("%s (line %d) Bad shell context (!unixy && !use_batchfile)\n"),
             __FILE__, __LINE__);
 #endif
 
@@ -3712,11 +4077,8 @@ construct_command_argv (char *line, char **restp, struct file *file,
       shellflags = "";
     else if (var->origin != o_default)
       shellflags = allocflags = allocated_expand_string_for_file (var->value, file);
-    else if (posix_pedantic && !ignore_errors_flag && NONE_SET (cmd_flags, COMMANDS_NOERROR))
-      /* In POSIX mode we default to -ec, unless we're ignoring errors.  */
-      shellflags = "-ec";
-    else
-      shellflags = "-c";
+    else 
+      shellflags = shell_get_flags( ignore_errors_flag || ALL_SET(flags, COMMANDS_NOERROR) );
 
     ifs = allocated_expand_variable_for_file (STRING_SIZE_TUPLE ("IFS"), file);
 

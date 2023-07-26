@@ -367,7 +367,7 @@ convert_to_pattern (void)
              POSIX, but for now preserve the old behavior and warn about it.  */
           if (f->deps != 0)
             {
-              if (posix_pedantic)
+              if (shell_info.posix_pedantic)
                 continue;
               O (error, &f->cmds->fileinfo,
                  _("warning: ignoring prerequisites on suffix rule definition"));

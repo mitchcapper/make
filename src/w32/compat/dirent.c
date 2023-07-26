@@ -22,7 +22,6 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include <string.h>
 #include <stdlib.h>
 #include "dirent.h"
-#include "filename.h"
 
 #ifndef __MINGW32__
 DIR*
@@ -63,7 +62,7 @@ opendir(const char* pDirName)
         pEndDirName = &pDir->dir_pDirectoryName[nBufferLen - 1];
 
         /* if directory name did not end in '/' or '\', add '/' */
-        if (ISSLASH(*pEndDirName)) {
+        if ((*pEndDirName != '/') && (*pEndDirName != '\\')) {
                 pEndDirName++;
                 *pEndDirName = '/';
         }

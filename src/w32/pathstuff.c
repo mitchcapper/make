@@ -110,7 +110,7 @@ w32ify(const char *filename, int resolve)
 
     for (p = w32_path; p && *p; p++)
       if (*p == '\\')
-        *p = DIR_SEPARATOR;
+		  *p = '/';
 
     return w32_path;
 }

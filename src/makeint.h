@@ -327,14 +327,8 @@ extern mode_t umask (mode_t);
 /* Test if two strings are equal, but match case-insensitively on systems
    which have case-insensitive filesystems.  Should only be used for
    filenames!  */
-#ifdef HAVE_CASE_INSENSITIVE_FS
-# define patheq(a, b) \
-    ((a) == (b) \
-     || (tolower((unsigned char)*(a)) == tolower((unsigned char)*(b)) \
-         && (*(a) == '\0' || !strcasecmp ((a) + 1, (b) + 1))))
-#else
-# define patheq(a, b) streq(a, b)
-#endif
+
+extern int patheq(const char* p1, const char* p2);
 
 #define strneq(a, b, l) (strncmp ((a), (b), (l)) == 0)
 
@@ -379,13 +373,52 @@ extern mode_t umask (mode_t);
 
 void sync_Path_environment (void);
 int w32_kill (pid_t pid, int sig);
-int find_and_set_default_shell (const char *token);
+typedef struct
+{
+	/* 1 when we have not yet had a valid shell explicitly assigned or found our shell  */
+	int have_no_default_sh_exe;
+	/* is default_shell unixy? , non would be things like cmd.exe or powershell.exe or pwsh.exe */
+	int unixy;
+	int is_cmd_exe;
+	/* can we run commands via 'sh -c xxx' or must we use batch files? */
+	int use_batchfile;
+	int is_relative_path; //tracked as if so we need to re-evaulate any time the directory changes
+	const char* full_path; //same as initial_value_set_by_user unless initial_value_set_by_user can only be found in the path vars
+	const char* executable_name; // ie bash
+	const char* initial_value_set_by_user; // could be ./bash for example
 
-/* indicates whether or not we have Bourne shell */
-extern int no_default_sh_exe;
+	const char* call_args; //args required to execute a command, ie -c as detected by the system and taking into account posix_pedantic
+	const char* user_call_args; //args specified by the makefile/user directly these are always what is returned if set to non-null
 
-/* is default_shell unixy? */
-extern int unixy_shell;
+	/* Nonzero if we have seen the magic '.POSIX' target.
+	   This turns on pedantic compliance with POSIX.2.  */
+	int posix_pedantic; //pedantic mode for the flags for the shell
+	const char* default_shell; // default / fallback shell if not overwritten or is invalid
+	int _defaults_inited; //have we inited the shell defaults for the platform
+	int _shell_detected; //after setting the shell have we detected features, if a shell is used and this is not set should throw error
+	char _alt_flags_buffer[128]; //buffer if we need to modify the return flags, for example to take into account pendantic
+
+	char banned_shells[PATH_MAX]; //NOMAKESHELLS shells not to allow Makefiles to set as our shell
+	const char* user_defined_default_shell; //DEFAULTMAKESHELL
+
+} shell_info_t;
+
+extern shell_info_t shell_info;
+
+extern int shell_detect_features();
+extern int shell_set_and_detect(const char* shell, const char* by_what);
+extern const char* shell_get_for_use();
+extern int shells_equal(const char* s1, const char* s2);
+extern const char* shell_get_default();
+extern const char* shell_get_flags(int no_error_mode);
+extern int shell_check_change(const char* new_shell, int dir_may_have_changed);
+extern void shell_set(const char* shell, const char* by_what);
+extern void shell_posix_pedantic_set(int val);
+extern void shell_set_user_default_shell(const char* shell);
+extern void shell_set_banned_shells(const char* shell);
+extern int shell_is_banned(const char* shell);
+
+
 
 /* We don't have a preferred fixed value for LOCALEDIR.  */
 # ifndef LOCALEDIR
@@ -732,16 +765,13 @@ extern unsigned short stopchar_map[];
 extern int just_print_flag, run_silent, ignore_errors_flag, keep_going_flag;
 extern int print_data_base_flag, question_flag, touch_flag, always_make_flag;
 extern int env_overrides, no_builtin_rules_flag, no_builtin_variables_flag;
-extern int print_version_flag, check_symlink_flag, posix_pedantic;
+extern int print_version_flag, check_symlink_flag;
 extern int not_parallel, second_expansion, clock_skew_detected;
 extern int rebuilding_makefiles, one_shell, output_sync, verify_flag;
 extern int export_all_variables;
 extern unsigned long command_count;
 
-extern const char *default_shell;
 
-/* can we run commands via 'sh -c xxx' or must we use batch files? */
-extern int batch_mode_shell;
 
 #define GNUMAKEFLAGS_NAME       "GNUMAKEFLAGS"
 #define MAKEFLAGS_NAME          "MAKEFLAGS"
