@@ -26,7 +26,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #else
 #include <sys/file.h>
 #endif
-
+#include "filename.h"
 #ifndef NO_ARCHIVES
 
 #if MK_OS_VMS
@@ -689,7 +689,7 @@ ar_scan (const char *archive, ar_member_func_t function, const void *arg)
 #endif  /* Not AIAMAG. */
 
           /* On some systems, there is a slash after each member name.  */
-          if (*p == '/')
+          if (ISSLASH(*p))
             *p = '\0';
 
 #ifndef AIAMAG
@@ -699,7 +699,7 @@ ar_scan (const char *archive, ar_member_func_t function, const void *arg)
              real member name appears in the element data (used by
              4.4BSD).  */
           if (! is_namemap
-              && (name[0] == ' ' || name[0] == '/')
+              && (name[0] == ' ' || ISSLASH(name[0]))
               && namemap != 0)
             {
               const char* err;
@@ -717,7 +717,7 @@ ar_scan (const char *archive, ar_member_func_t function, const void *arg)
             }
           else if (name[0] == '#'
                    && name[1] == '1'
-                   && name[2] == '/')
+                   && ISSLASH(name[2]))
             {
               const char* err;
               unsigned int name_len = make_toui (name + 3, &err);
@@ -814,7 +814,7 @@ ar_scan (const char *archive, ar_member_func_t function, const void *arg)
                 if (*clear == '\n')
                   {
                     *clear = '\0';
-                    if (clear[-1] == '/')
+                    if ( ISSLASH(clear[-1]))
                       clear[-1] = '\0';
                   }
               }
@@ -853,7 +853,7 @@ ar_name_equal (const char *name, const char *mem, int truncated)
   if (streq (name, mem))
     return 1;
 
-  p = strrchr (name, '/');
+  p = LAST_SLASH_IN_PATH (name);
   if (p != 0)
     name = p + 1;
 

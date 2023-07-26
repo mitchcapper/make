@@ -20,6 +20,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #if MK_OS_W32
 #include "pathstuff.h"
 #endif
+#include "filename.h"
 
 
 /* Structure used to represent a selective VPATH searchpath.  */
@@ -237,7 +238,7 @@ construct_vpath_list (char *pattern, char *dirpath)
       /* We need also to leave alone a trailing slash in "d:/".  */
       if (len > 3 || (len > 1 && v[1] != ':'))
 #endif
-      if (len > 1 && p[-1] == '/')
+      if (len > 1 && ISSLASH( p[-1]))
         --len;
 
       /* Put the directory on the vpath list.  */
@@ -335,15 +336,9 @@ selective_vpath_search (struct vpath *path, const char *file,
      NAME_DPLEN gets the length of the prefix; FILENAME gets the pointer to
      the name-within-directory and FLEN is its length.  */
 
-  n = strrchr (file, '/');
-#ifdef HAVE_DOS_PATHS
+  n = LAST_SLASH_IN_PATH (file);
   /* We need the rightmost slash or backslash.  */
-  {
-    const char *bslash = strrchr (file, '\\');
-    if (!n || bslash > n)
-      n = bslash;
-  }
-#endif
+
   name_dplen = n != 0 ? n - file : 0;
   filename = name_dplen > 0 ? n + 1 : file;
   if (name_dplen > 0)
@@ -384,7 +379,7 @@ selective_vpath_search (struct vpath *path, const char *file,
 #endif
       /* Now add the name-within-directory at the end of NAME.  */
 #if !MK_OS_VMS
-      if (p != name && p[-1] != '/')
+      if (p != name && ! ISSLASH( p[-1] ))
         {
           *p = '/';
           memcpy (p + 1, filename, flen + 1);
@@ -392,7 +387,7 @@ selective_vpath_search (struct vpath *path, const char *file,
       else
 #else
       /* VMS use a slash if no directory terminator present */
-      if (p != name && p[-1] != '/' && p[-1] != ':' &&
+      if (p != name && ! ISSLASH( p[-1] ) && p[-1] != ':' &&
           p[-1] != '>' && p[-1] != ']')
         {
           *p = '/';
@@ -444,7 +439,7 @@ selective_vpath_search (struct vpath *path, const char *file,
 
 #if MK_OS_VMS
           /* For VMS syntax just use the original vpath */
-          if (*p != '/')
+          if (ISSLASH( *p ))
             exists_in_cache = exists = dir_file_exists_p (vpath[i], filename);
           else
 #endif

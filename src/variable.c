@@ -25,6 +25,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include "commands.h"
 #include "variable.h"
 #include "os.h"
+#include "filename.h"
 #include "rule.h"
 #if MK_OS_W32
 #include "pathstuff.h"
@@ -1584,10 +1585,7 @@ do_variable_definition (const floc *flocp, const char *varname, const char *valu
           char *fake_env[2];
           size_t pathlen = 0;
 
-          shellbase = strrchr (newval, '/');
-          bslash = strrchr (newval, '\\');
-          if (!shellbase || bslash > shellbase)
-            shellbase = bslash;
+          shellbase = LAST_SLASH_IN_PATH (newval);
           if (!shellbase && newval[1] == ':')
             shellbase = newval + 1;
           if (shellbase)

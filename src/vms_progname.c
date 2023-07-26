@@ -64,7 +64,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
-
+#include "filename.h"
 #include <descrip.h>
 #include <dvidef.h>
 #include <efndef.h>
@@ -155,7 +155,7 @@ set_program_name (const char *argv0)
   /* from the run command and needs to be fixed up.                        */
   /* If the DECC$POSIX_COMPLIANT_PATHNAMES is set to 2, then it is the     */
   /* DISK$VOLUME that will be present, and it will still need to be fixed. */
-  if (argv0[0] == '/')
+  if (IS_ABSOLUTE_FILE_NAME( argv0[0] ))
     {
       char * nextslash;
       int length;
@@ -186,7 +186,7 @@ set_program_name (const char *argv0)
       /* SYS$GETDVI will append the volume name to this */
       strcpy (diskvolnam, "DISK$");
 
-      nextslash = strchr (&argv0[1], '/');
+      nextslash = strpbrk (&argv0[1], SLASHES);
       if (nextslash != NULL)
         {
           length = nextslash - argv0 - 1;
@@ -381,7 +381,7 @@ set_program_name (const char *argv0)
         /* This means it is probably the name from a DCL command */
         /* Find the last slash which separates the file from the */
         /* path. */
-        lastslash = strrchr (argv0, '/');
+        lastslash = LAST_SLASH_IN_PATH (argv0);
 
         if (lastslash != NULL) {
             int i;

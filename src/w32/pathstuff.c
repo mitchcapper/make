@@ -18,7 +18,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include <string.h>
 #include <stdlib.h>
 #include "pathstuff.h"
-
+#include "filename.h"
 /*
  * Convert delimiter separated vpath to Canonical format.
  */
@@ -110,7 +110,7 @@ w32ify(const char *filename, int resolve)
 
     for (p = w32_path; p && *p; p++)
       if (*p == '\\')
-        *p = '/';
+        *p = DIR_SEPARATOR;
 
     return w32_path;
 }

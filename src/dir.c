@@ -19,6 +19,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include "filedef.h"
 #include "dep.h"
 #include "debug.h"
+#include "filename.h"
 #define GetVolumeInformation GetVolumeInformationA
 #if defined HAVE_DIRENT_H || defined _WIN32
 #ifdef _WIN32
@@ -825,7 +826,7 @@ file_exists_p (const char *name)
     return ar_member_date (name) != (time_t) -1;
 #endif
 
-  dirend = strrchr (name, '/');
+  dirend = LAST_SLASH_IN_PATH (name);
 #if MK_OS_VMS
   if (dirend == NULL)
     {
@@ -875,7 +876,7 @@ file_exists_p (const char *name)
       dirname = p;
     }
 #if MK_OS_VMS
-  if (*slash == '/')
+  if (ISSLASH(*slash))
     slash++;
 #else
   slash++;
@@ -895,7 +896,7 @@ file_impossible (const char *filename)
   struct directory *dir;
   struct dirfile *new;
 
-  dirend = strrchr (p, '/');
+  dirend = LAST_SLASH_IN_PATH (p);
 #if MK_OS_VMS
   if (dirend == NULL)
     {
@@ -948,7 +949,7 @@ file_impossible (const char *filename)
         }
       dir = find_directory (dirname);
 #if MK_OS_VMS
-      if (*slash == '/')
+      if (ISSLASH(*slash))
         filename = p = slash + 1;
       else
         filename = p = slash;
@@ -993,7 +994,7 @@ file_impossible_p (const char *filename)
   int want_vmsify = 0;
 #endif
 
-  dirend = strrchr (filename, '/');
+  dirend = LAST_SLASH_IN_PATH (filename);
 #if MK_OS_VMS
   if (dirend == NULL)
     {
@@ -1040,7 +1041,7 @@ file_impossible_p (const char *filename)
         }
       dir = find_directory (dirname)->contents;
 #if MK_OS_VMS
-      if (*slash == '/')
+      if (ISSLASH(*slash))
         filename = slash + 1;
       else
         filename = slash;

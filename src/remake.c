@@ -24,7 +24,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include "debug.h"
 
 #include <assert.h>
-
+#include "filename.h"
 #ifdef HAVE_FCNTL_H
 #include <fcntl.h>
 #else
@@ -1500,7 +1500,7 @@ f_mtime (struct file *file, int search)
               name_len = strlen (name) - strlen (file->name) - 1;
 #else
               name_len = strlen (name) - strlen (file->name);
-              if (name[name_len - 1] == '/')
+              if ( ISSLASH(name[name_len - 1]))
                   name_len--;
 #endif
               if (gpath_search (name, name_len))
@@ -1729,7 +1729,7 @@ name_mtime (const char *name)
           /* If the target is fully-qualified or the source is just a
              filename, then the new path is the target.  Otherwise it's the
              source directory plus the target.  */
-          if (lbuf[0] == '/' || (p = strrchr (lpath, '/')) == NULL)
+          if ( IS_ABSOLUTE_FILE_NAME(lbuf[0])  || (p = LAST_SLASH_IN_PATH (lpath)) == NULL)
             strcpy (lpath, lbuf);
           else if ((p - lpath) + llen + 2 > GET_PATH_MAX)
             /* Eh?  Path too long!  Again, just go with what we have.  */

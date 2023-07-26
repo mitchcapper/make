@@ -23,6 +23,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include "job.h"      /* struct child, used inside commands.h */
 #include "commands.h" /* set_file_variables */
 #include "shuffle.h"
+#include "filename.h"
 #include <assert.h>
 
 static int pattern_search (struct file *file, int archive,
@@ -194,6 +195,7 @@ pattern_search (struct file *file, int archive,
 
   /* The last slash in FILENAME (or nil if there is none).  */
   const char *lastslash;
+  const char *lastslash2;
 
   /* This is a file-object used as an argument in
      recursive calls.  It never contains any data
@@ -259,6 +261,11 @@ pattern_search (struct file *file, int archive,
          but not counting any slash at the end.  (foo/bar/ counts as
          bar/ in directory foo/, not empty in directory foo/bar/.)  */
       lastslash = memrchr (filename, '/', namelen - 1);
+#ifdef _WIN32
+      lastslash2 = memrchr (filename, '\\', namelen - 1);
+      if (! lastslash || (lastslash2 && lastslash < lastslash2) )
+        lastslash = lastslash2;
+#endif      
 #if MK_OS_VMS
       if (lastslash == NULL)
         lastslash = strrchr (filename, ']');
@@ -335,7 +342,7 @@ pattern_search (struct file *file, int archive,
 #if MK_OS_VMS
               check_lastslash = strpbrk (target, "/]>:") == NULL;
 #else
-              check_lastslash = strchr (target, '/') == 0;
+              check_lastslash = LAST_SLASH_IN_PATH (target) == 0;
 #endif
 #ifdef HAVE_DOS_PATHS
               /* Didn't find it yet: check for DOS-type directories.  */

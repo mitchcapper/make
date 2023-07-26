@@ -19,7 +19,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include <string.h>
 #include <descrip.h>
 #include <clidef.h>
-
+#include "filename.h"
 /* TODO - VMS specific header file conditionally included in makeint.h */
 
 #include <stsdef.h>
@@ -1045,6 +1045,9 @@ child_execute_job (struct childbase *child, int good_stdin UNUSED, char *argv)
           UPDATE_TOKEN;
           break;
         case '/':
+#ifdef _WIN32
+        case DIR_SEPARATOR:
+#endif
           /* Unix path or VMS option start, read until non-path symbol */
           if (assignment_hack != 0)
             assignment_hack++;

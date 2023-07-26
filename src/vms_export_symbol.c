@@ -34,6 +34,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include <ssdef.h>
 #include <unixlib.h>
 #include <libclidef.h>
+#include "filename.h"
 
 #pragma member_alignment save
 #pragma nomember_alignment longword
@@ -373,7 +374,7 @@ create_foreign_command (const char * command, const char * image)
 
   vms_command[0] = '$';
   vms_command[1] = 0;
-  if (image[0] == '/')
+  if (ISSLASH( image[0] ) )
     {
 #if __CRTL_VER >= 70301000
       /* Current decc$to_vms is reentrant */

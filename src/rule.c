@@ -24,6 +24,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include "commands.h"
 #include "variable.h"
 #include "rule.h"
+#include "filename.h"
 
 static void freerule (struct rule *rule, struct rule *lastrule);
 
@@ -180,7 +181,7 @@ snap_implicit_rules (void)
             p = strrchr (dname, ':');
           p2 = p ? strchr (p, '%') : 0;
 #else
-          const char *p = strrchr (dname, '/');
+          const char *p = LAST_SLASH_IN_PATH (dname);
           const char *p2 = p ? strchr (p, '%') : 0;
 #endif
           ndeps++;

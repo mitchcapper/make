@@ -26,7 +26,7 @@ struct passwd *getpwnam (char *name);
 #else
 # include <pwd.h>
 #endif
-
+#include "filename.h"
 #include "filedef.h"
 #include "dep.h"
 #include "job.h"
@@ -1913,11 +1913,7 @@ check_specials (struct nameseq *files, int set_default)
 
           /* See if this target's name does not start with a '.',
              unless it contains a slash.  */
-          if (*nm == '.' && strchr (nm, '/') == 0
-#ifdef HAVE_DOS_PATHS
-              && strchr (nm, '\\') == 0
-#endif
-              )
+          if (*nm == '.' && LAST_SLASH_IN_PATH (nm) == 0)
             continue;
 
           /* If this file is a suffix, it can't be the default goal file.  */

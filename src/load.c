@@ -23,7 +23,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include <stdlib.h>
 #include <dlfcn.h>
 #include <errno.h>
-
+#include "filename.h"
 #include "debug.h"
 #include "filedef.h"
 #include "variable.h"
@@ -72,17 +72,9 @@ load_object (const floc *flocp, int noerror, const char *ldname,
     }
 
   /* Find the prefix of the ldname.  */
-  fp = strrchr (ldname, '/');
+  fp = LAST_SLASH_IN_PATH (ldname);
 #ifdef HAVE_DOS_PATHS
-  if (fp)
-    {
-      const char *fp2 = strchr (fp, '\\');
 
-      if (fp2 > fp)
-        fp = fp2;
-    }
-  else
-    fp = strrchr (ldname, '\\');
   /* The (improbable) case of d:foo.  */
   if (fp && *fp && fp[1] == ':')
     fp++;
@@ -111,11 +103,7 @@ load_object (const floc *flocp, int noerror, const char *ldname,
 
   /* If the path has no "/", try the current directory first.  */
   dlp = NULL;
-  if (! strchr (ldname, '/')
-#ifdef HAVE_DOS_PATHS
-      && ! strchr (ldname, '\\')
-#endif
-      )
+  if (! LAST_SLASH_IN_PATH (ldname) )
     dlp = dlopen (concat (2, "./", ldname), RTLD_LAZY|RTLD_GLOBAL);
 
   /* If we haven't opened it yet, try the default search path.  */

@@ -18,7 +18,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include <assert.h>
 #include <string.h>
-
+#include "filename.h"
 /* Default shell to use.  */
 #if MK_OS_W32
 # include <windows.h>
@@ -388,15 +388,10 @@ _is_unixy_shell (const char *path)
   };
 
   /* find the rightmost '/' or '\\' */
-  const char *name = strrchr (path, '/');
-  const char *p = strrchr (path, '\\');
+  const char *name = LAST_SLASH_IN_PATH (path);
   unsigned i;
 
-  if (name && p)    /* take the max */
-    name = (name > p) ? name : p;
-  else if (p)       /* name must be 0 */
-    name = p;
-  else if (!name)   /* name and p must be 0 */
+  if (!name)   /* name and p must be 0 */
     name = path;
 
   if (ISDIRSEP (*name))
@@ -428,6 +423,7 @@ is_bourne_compatible_shell (const char *path)
     "rksh",
     "zsh",
     "ash",
+    "gsh",
     NULL
   };
   const char **s;
