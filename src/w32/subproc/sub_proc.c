@@ -29,7 +29,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include <process.h>  /* for msvc _beginthreadex, _endthreadex */
 #include <signal.h>
 #include <windows.h>
-
+#include "filename.h"
 #include "filedef.h"
 #include "variable.h"
 #include "sub_proc.h"
@@ -674,7 +674,7 @@ process_begin(
                         /*
                          *  Find base name of shell
                          */
-                        shell_name = strrchr( buf, '/');
+                        shell_name = LAST_SLASH_IN_PATH( buf );
                         if (shell_name) {
                                 shell_name++;
                         } else {

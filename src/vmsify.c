@@ -23,7 +23,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include <ctype.h>
 
 #include "makeint.h"
-
+#include "filename.h"
 #if MK_OS_VMS
 #include <unixlib.h>
 #include <stdlib.h>
@@ -257,7 +257,7 @@ vmsify (const char *name, int type)
 
       if (*t == '$')
         {
-          if (strchr (name, '/') == 0)
+          if (LAST_SLASH_IN_PATH (name) == 0)
             {
               strcpy (vmsname, name);
               if ((type == 1) && (s1 != 0) && (s2 == 0))

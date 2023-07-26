@@ -22,7 +22,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include "os.h"
 #include "commands.h"
 #include "debug.h"
-
+#include "filename.h"
 
 struct function_table_entry
   {
@@ -2036,14 +2036,8 @@ func_not (char *o, char **argv, char *funcname UNUSED)
 
 
 #ifdef HAVE_DOS_PATHS
-# ifdef __CYGWIN__
-#  define IS_ABSOLUTE(n) ((n[0] && n[1] == ':') || ISDIRSEP (n[0]))
-# else
-#  define IS_ABSOLUTE(n) (n[0] && n[1] == ':')
-# endif
 # define ROOT_LEN 3
 #else
-# define IS_ABSOLUTE(n) (n[0] == '/')
 # define ROOT_LEN 1
 #endif
 
@@ -2062,7 +2056,7 @@ abspath (const char *name, char *apath)
 
   apath_limit = apath + GET_PATH_MAX;
 
-  if (!IS_ABSOLUTE(name))
+  if (!IS_ABSOLUTE_FILE_NAME(name))
     {
       /* It is unlikely we would make it until here but just to make sure. */
       if (!starting_directory)
@@ -2193,7 +2187,7 @@ func_realpath (char *o, char **argv, const char *funcname UNUSED)
           if (rp)
             {
               char *ep = rp + strlen (rp) - 1;
-              while (ep > rp && ep[0] == '/')
+              while (ep > rp &&  ISSLASH(ep[0]))
                 *(ep--) = '\0';
             }
 # endif
