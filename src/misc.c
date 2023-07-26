@@ -185,7 +185,7 @@ collapse_continuations (char *line)
           if (dollar)
             --out;
 
-          if (!posix_pedantic)
+          if (shell_info.posix_pedantic)
             while (out > line && ISBLANK (out[-1]))
               --out;
 

@@ -534,7 +534,7 @@ find_directory (const char *name)
     tstart = tem;
     if (tstart[1] == ':')
       tstart += 2;
-    for (tend = tem + (len - 1); tend > tstart && ISDIRSEP (*tend); tend--)
+    for (tend = tem + (len - 1); tend > tstart && ISSLASH (*tend); tend--)
       *tend = '\0';
 
     r = stat (tem, &st);
@@ -847,9 +847,6 @@ file_exists_p (const char *name)
 #ifdef HAVE_DOS_PATHS
   /* Forward and backslashes might be mixed.  We need the rightmost one.  */
   {
-    const char *bslash = strrchr (name, '\\');
-    if (!dirend || bslash > dirend)
-      dirend = bslash;
     /* The case of "d:file".  */
     if (!dirend && name[0] && name[1] == ':')
       dirend = name + 1;

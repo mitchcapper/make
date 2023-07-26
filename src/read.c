@@ -1876,9 +1876,9 @@ check_specials (struct nameseq *files, int set_default)
     {
       const char* nm = t->name;
 
-      if (!posix_pedantic && streq (nm, ".POSIX"))
+      if (! shell_info.posix_pedantic && streq (nm, ".POSIX"))
         {
-          posix_pedantic = 1;
+		  shell_posix_pedantic_set(1);
           define_variable_cname (".SHELLFLAGS", "-ec", o_default, 0);
           /* These default values are based on IEEE Std 1003.1-2008.
              It requires '-O 1' for [CF]FLAGS, but GCC doesn't allow
@@ -2992,7 +2992,7 @@ construct_include_path (const char **arg_dirs)
           {
             size_t len = strlen (dir);
             /* If dir name is written with trailing slashes, discard them.  */
-            while (len > 1 && dir[len - 1] == '/')
+            while (len > 1 && ISSLASH(dir[len - 1]))
               --len;
             if (len > max_incl_len)
               max_incl_len = len;
@@ -3031,7 +3031,7 @@ construct_include_path (const char **arg_dirs)
             {
               size_t len = strlen (*cpp);
               /* If dir name is written with trailing slashes, discard them.  */
-              while (len > 1 && (*cpp)[len - 1] == '/')
+              while (len > 1 && ISSLASH( (*cpp)[len - 1] ))
                 --len;
               if (len > max_incl_len)
                 max_incl_len = len;
@@ -3060,7 +3060,7 @@ char *
 tilde_expand (const char *name)
 {
 #if !MK_OS_VMS
-  if (name[1] == '/' || name[1] == '\0')
+  if (ISSLASH(name[1]) || name[1] == '\0')
     {
       char *home_dir;
       int is_variable;
@@ -3106,7 +3106,7 @@ tilde_expand (const char *name)
   else
     {
       struct passwd *pwent;
-      char *userend = strchr (name + 1, '/');
+      char *userend = LAST_SLASH_IN_PATH (name + 1);
       if (userend != 0)
         *userend = '\0';
       pwent = getpwnam (name + 1);
@@ -3270,11 +3270,11 @@ parse_file_seq (char **stringp, size_t size, int stopmap,
             s += 2;
 #endif
           /* Skip leading './'s.  */
-          while (p - s > 2 && s[0] == '.' && s[1] == '/')
+          while (p - s > 2 && s[0] == '.' && ISSLASH( s[1] ))
             {
               /* Skip "./" and all following slashes.  */
               s += 2;
-              while (*s == '/')
+              while (ISSLASH(*s))
                 ++s;
             }
         }
