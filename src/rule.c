@@ -333,7 +333,7 @@ convert_to_pattern (void)
         {
           if (!f->deps)
             f->suffix = 1;
-          else if (!posix_pedantic)
+          else if (!shell_info.posix_pedantic)
             {
               O (error, &f->cmds->fileinfo,
                  _("warning: ignoring prerequisites on suffix rule definition"));

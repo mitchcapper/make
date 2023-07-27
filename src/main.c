@@ -15,7 +15,7 @@ You should have received a copy of the GNU General Public License along with
 this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
-#include "wlb_debug.h"
+
 #include <assert.h>
 #include "filename.h"
 #if MK_OS_W32
@@ -3740,6 +3740,5 @@ die (int status)
           _x = chdir (directory_before_chdir);
         }
     }
-  DisableDebugAssertPopup();
   exit (status);
 }

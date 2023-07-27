@@ -4078,7 +4078,7 @@ construct_command_argv (char *line, char **restp, struct file *file,
     else if (var->origin != o_default)
       shellflags = allocflags = allocated_expand_string_for_file (var->value, file);
     else 
-      shellflags = shell_get_flags( ignore_errors_flag || ALL_SET(flags, COMMANDS_NOERROR) );
+      shellflags = shell_get_flags( ignore_errors_flag || ALL_SET(cmd_flags, COMMANDS_NOERROR) );
 
     ifs = allocated_expand_variable_for_file (STRING_SIZE_TUPLE ("IFS"), file);
 
