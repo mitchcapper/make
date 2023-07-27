@@ -447,7 +447,7 @@ AM_CONDITIONAL([WINDOWSENV], [false])
 AM_CONDITIONAL([HAVE_WINDRES], [false])
 
 AS_CASE([$host],
-  [*-*-mingw32],
+  [*-*-mingw*],
    [AM_CONDITIONAL([WINDOWSENV], [true])
     w32_target_env=yes
     AC_DEFINE([MK_OS_W32], [1], [Build for the Windows32 API.])
